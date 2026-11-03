@@ -9,6 +9,9 @@ pool:
 variables:
   LANG: C.UTF-8
   LC_ALL: C.UTF-8
+  sourceFeed: ccse-hmi-dev/azure_pipeline
+  sourcePackage: hello-world-source
+  sourceVersion: '1.0.0'
 
 steps:
   - checkout: self
@@ -32,6 +35,7 @@ steps:
       echo '=== Tools ==='
       g++ --version
       git --version
+      unzip -v
 
       echo '=== Azure Pipelines ==='
       printf 'Agent: %s\nOS: %s\nArchitecture: %s\n' "$AGENT_NAME" "$AGENT_OS" "$AGENT_OSARCHITECTURE"
@@ -40,10 +44,31 @@ steps:
       printf 'Image: %s (%s)\n' "${ImageOS:-unknown}" "${ImageVersion:-unknown}"
     displayName: Show environment information
 
+  - task: UniversalPackages@0
+    displayName: Download source package from Azure Artifacts
+    inputs:
+      command: download
+      feedsToUse: internal
+      vstsFeed: $(sourceFeed)
+      vstsFeedPackage: $(sourcePackage)
+      vstsPackageVersion: $(sourceVersion)
+      downloadDirectory: $(Pipeline.Workspace)/source-package
+
+  - bash: |
+      set -euo pipefail
+      mkdir -p build/source
+      echo 'Extracting main.cpp from source archive...'
+      unzip -p "$SOURCE_PACKAGE_DIRECTORY/hello-world-source.zip" main.cpp > build/source/main.cpp
+      test -s build/source/main.cpp
+      echo 'Source archive extracted successfully.'
+    displayName: Extract downloaded source archive
+    env:
+      SOURCE_PACKAGE_DIRECTORY: $(Pipeline.Workspace)/source-package
+
   - bash: |
       set -euo pipefail
       mkdir -p build
-      g++ -std=c++17 -O2 -Wall -Wextra -Werror -pedantic main.cpp -o build/hello-world
+      g++ -std=c++17 -O2 -Wall -Wextra -Werror -pedantic build/source/main.cpp -o build/hello-world
     displayName: Compile C++ Hello World
 
   - bash: |
