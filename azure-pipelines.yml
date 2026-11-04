@@ -25,32 +25,34 @@ steps:
   - bash: |
       set -euo pipefail
 
-      echo '=== Before SDK cleanup ==='
-      sync
-      df -B1 -T /
-      before_bytes="$(df -B1 --output=avail / | awk 'NR == 2 {print $1}')"
-
-      echo '=== Removing Android, .NET, Haskell and Swift ==='
-      SECONDS=0
-      sudo rm -rf -- \
+      for path in \
         /usr/local/lib/android \
         /usr/share/dotnet \
         /usr/local/.ghcup \
-        /usr/share/swift
-      removal_seconds=$SECONDS
-      sync
-      total_seconds=$SECONDS
+        /usr/share/swift; do
+        printf '\n=== Cleanup: %s ===\n' "$path"
+        if [[ ! -e "$path" && ! -L "$path" ]]; then
+          echo 'Directory is absent; skipping.'
+          continue
+        fi
 
-      echo '=== After SDK cleanup ==='
-      after_bytes="$(df -B1 --output=avail / | awk 'NR == 2 {print $1}')"
-      df -B1 -T /
-      awk -v before="$before_bytes" -v after="$after_bytes" \
-        -v removal="$removal_seconds" -v total="$total_seconds" \
-        'BEGIN {
-          printf "Free before: %.2f GiB (%s bytes)\n", before / 1073741824, before
-          printf "Free after: %.2f GiB (%s bytes)\n", after / 1073741824, after
-          printf "Space reclaimed: %.2f GiB (%.0f bytes)\n", (after - before) / 1073741824, after - before
-          printf "Deletion time: %d seconds\n", removal
-          printf "Deletion and sync time: %d seconds\n", total
-        }'
-    displayName: Remove unused Linux SDKs and measure savings
+        sync
+        before_bytes="$(df -B1 --output=avail / | awk 'NR == 2 {print $1}')"
+        started="$(date +%s.%N)"
+        sudo rm -rf -- "$path"
+        deleted="$(date +%s.%N)"
+        sync
+        finished="$(date +%s.%N)"
+        after_bytes="$(df -B1 --output=avail / | awk 'NR == 2 {print $1}')"
+
+        awk -v before="$before_bytes" -v after="$after_bytes" \
+          -v started="$started" -v deleted="$deleted" -v finished="$finished" \
+          'BEGIN {
+            printf "Free before: %.3f GiB (%s bytes)\n", before / 1073741824, before
+            printf "Free after: %.3f GiB (%s bytes)\n", after / 1073741824, after
+            printf "Space reclaimed: %.3f GiB (%.0f bytes)\n", (after - before) / 1073741824, after - before
+            printf "Deletion time: %.3f seconds\n", deleted - started
+            printf "Deletion and sync time: %.3f seconds\n", finished - started
+          }'
+      done
+    displayName: Remove Linux SDKs with individual time and space measurements
