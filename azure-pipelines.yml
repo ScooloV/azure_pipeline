@@ -3,76 +3,60 @@ trigger:
     include:
       - main
 
+strategy:
+  matrix:
+    ubuntu_22_04:
+      vmImage: ubuntu-22.04
+    ubuntu_24_04:
+      vmImage: ubuntu-24.04
+    ubuntu_26_04:
+      vmImage: ubuntu-26.04
+    windows_2022:
+      vmImage: windows-2022
+    windows_2025:
+      vmImage: windows-2025
+
 pool:
-  vmImage: ubuntu-latest
+  vmImage: $(vmImage)
 
 variables:
   LANG: C.UTF-8
   LC_ALL: C.UTF-8
-  targetFeed: ccse-hmi-dev/azure_pipeline
-  targetPackage: hello-world-linux
 
 steps:
-  - checkout: self
+  - checkout: none
+
+  - pwsh: |
+      Write-Host '=== Azure Pipelines ==='
+      Write-Host "Requested image: $env:REQUESTED_IMAGE"
+      Write-Host "Agent: $env:AGENT_NAME"
+      Write-Host "OS: $env:AGENT_OS"
+      Write-Host "Architecture: $env:AGENT_OSARCHITECTURE"
+      Write-Host "Image: $env:ImageOS ($env:ImageVersion)"
+      Write-Host "Workspace: $env:PIPELINE_WORKSPACE"
+      Write-Host "Temp directory: $env:AGENT_TEMPDIRECTORY"
+    displayName: Show image and agent details
+    env:
+      REQUESTED_IMAGE: $(vmImage)
 
   - bash: |
       set -euo pipefail
 
-      echo '=== Operating system ==='
-      cat /etc/os-release
-      uname -a
+      echo '=== All filesystems (GiB) ==='
+      df -BG -T
+      echo '=== Workspace and temp filesystems (GiB) ==='
+      df -BG -T "$PIPELINE_WORKSPACE" "$AGENT_TEMPDIRECTORY"
+    displayName: Show Linux disk space
+    condition: and(succeeded(), eq(variables['Agent.OS'], 'Linux'))
 
-      echo '=== CPU ==='
-      lscpu
-
-      echo '=== Memory ==='
-      free -h
-
-      echo '=== Disk ==='
-      df -h .
-
-      echo '=== Tools ==='
-      g++ --version
-      git --version
-      unzip -v
-
-      echo '=== Azure Pipelines ==='
-      printf 'Agent: %s\nOS: %s\nArchitecture: %s\n' "$AGENT_NAME" "$AGENT_OS" "$AGENT_OSARCHITECTURE"
-      printf 'Build ID: %s\nBranch: %s\nCommit: %s\n' "$BUILD_BUILDID" "$BUILD_SOURCEBRANCH" "$BUILD_SOURCEVERSION"
-      printf 'Sources: %s\n' "$BUILD_SOURCESDIRECTORY"
-      printf 'Image: %s (%s)\n' "${ImageOS:-unknown}" "${ImageVersion:-unknown}"
-    displayName: Show environment information
-
-  - bash: |
-      set -euo pipefail
-      mkdir -p build/source
-      cp main.cpp build/source/main.cpp
-    displayName: Prepare source from repository
-
-  - bash: |
-      set -euo pipefail
-      mkdir -p build
-      g++ -std=c++17 -O2 -Wall -Wextra -Werror -pedantic build/source/main.cpp -o build/hello-world
-    displayName: Compile C++ Hello World
-
-  - bash: |
-      set -euo pipefail
-      output="$(./build/hello-world)"
-      printf '%s\n' "$output"
-      if [[ "$output" != 'Hello, world!' ]]; then
-        echo 'Unexpected program output' >&2
-        exit 1
-      fi
-    displayName: Run and verify Hello World
-
-  - task: UniversalPackages@0
-    displayName: Publish executable to Azure Artifacts
-    inputs:
-      command: publish
-      publishDirectory: '$(Build.SourcesDirectory)/build'
-      feedsToUsePublish: internal
-      vstsFeedPublish: '$(targetFeed)'
-      vstsFeedPackagePublish: '$(targetPackage)'
-      versionOption: custom
-      versionPublish: '1.1.$(Build.BuildId)'
-      packagePublishDescription: 'Built from commit $(Build.SourceVersion)'
+  - pwsh: |
+      Write-Host '=== Local disks (GiB) ==='
+      Get-CimInstance Win32_LogicalDisk -Filter 'DriveType = 3' |
+        Sort-Object DeviceID |
+        Select-Object DeviceID, VolumeName, FileSystem,
+          @{Name='SizeGiB'; Expression={[math]::Round($_.Size / 1GB, 2)}},
+          @{Name='UsedGiB'; Expression={[math]::Round(($_.Size - $_.FreeSpace) / 1GB, 2)}},
+          @{Name='FreeGiB'; Expression={[math]::Round($_.FreeSpace / 1GB, 2)}} |
+        Format-Table -AutoSize
+    displayName: Show Windows disk space
+    condition: and(succeeded(), eq(variables['Agent.OS'], 'Windows_NT'))
