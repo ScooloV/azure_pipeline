@@ -84,6 +84,49 @@ steps:
     displayName: Diagnose Linux disk usage
     condition: and(succeeded(), eq(variables['Agent.OS'], 'Linux'))
 
+  - bash: |
+      set -euo pipefail
+
+      echo '=== Installed SDK packages (size in KiB) ==='
+      package_report="$AGENT_TEMPDIRECTORY/sdk-packages.tsv"
+      dpkg-query -W -f='${db:Status-Status}\t${binary:Package}\t${Version}\t${Installed-Size}\n' |
+        awk -F '\t' '$1 == "installed" && tolower($2) ~ /dotnet|aspnet|netstandard|android|ghc|swift/ {print $2 "\t" $3 "\t" $4}' |
+        sort > "$package_report"
+      printf 'Package\tVersion\tInstalledSizeKiB\n'
+      cat "$package_report"
+      if [[ ! -s "$package_report" ]]; then
+        echo 'No matching installed packages.'
+      fi
+
+      echo '=== Package ownership of SDK directories and files ==='
+      for path in \
+        /usr/share/dotnet \
+        /usr/share/dotnet/dotnet \
+        /usr/local/lib/android \
+        /usr/local/lib/android/cmdline-tools/latest/bin/sdkmanager \
+        /usr/local/.ghcup \
+        /usr/local/.ghcup/bin/ghc \
+        /usr/share/swift \
+        /usr/share/swift/usr/bin/swift; do
+        printf '\n--- %s ---\n' "$path"
+        if [[ ! -e "$path" ]]; then
+          echo 'Path does not exist on this image.'
+          continue
+        fi
+        if ! dpkg-query -S "$path"; then
+          echo 'No package ownership record for this path.'
+        fi
+        resolved="$(readlink -f -- "$path")"
+        if [[ "$resolved" != "$path" ]]; then
+          printf 'Resolved path: %s\n' "$resolved"
+          if ! dpkg-query -S "$resolved"; then
+            echo 'No package ownership record for the resolved path.'
+          fi
+        fi
+      done
+    displayName: Report Linux SDK package ownership
+    condition: and(succeeded(), eq(variables['Agent.OS'], 'Linux'))
+
   - pwsh: |
       Write-Host '=== Local disks (GiB) ==='
       Get-CimInstance Win32_LogicalDisk -Filter 'DriveType = 3' |
