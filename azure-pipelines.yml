@@ -49,6 +49,41 @@ steps:
     displayName: Show Linux disk space
     condition: and(succeeded(), eq(variables['Agent.OS'], 'Linux'))
 
+  - bash: |
+      set -euo pipefail
+
+      echo '=== Largest directories on root filesystem (MiB, depth 2) ==='
+      # Stay on the root filesystem; keep stderr visible for scan errors.
+      sudo du -x -m --max-depth=2 / | sort -n | tail -n 80
+
+      echo '=== Installed tools and caches (MiB, depth 2) ==='
+      paths=()
+      for path in /usr/local /usr/share /opt /var/lib /var/cache /home; do
+        if [[ -d "$path" ]]; then
+          paths+=("$path")
+        fi
+      done
+      if [[ -n "${AGENT_TOOLSDIRECTORY:-}" && -d "$AGENT_TOOLSDIRECTORY" ]]; then
+        paths+=("$AGENT_TOOLSDIRECTORY")
+      fi
+      if (( ${#paths[@]} > 0 )); then
+        sudo du -x -m --max-depth=2 "${paths[@]}" | sort -n | tail -n 100
+      fi
+
+      echo '=== Docker disk usage ==='
+      if command -v docker >/dev/null 2>&1; then
+        if ! sudo docker system df -v; then
+          echo '##vso[task.logissue type=warning]Docker disk usage is unavailable.'
+        fi
+      else
+        echo 'Docker is not installed.'
+      fi
+
+      echo '=== Root filesystem usage (bytes) ==='
+      df -B1 -T /
+    displayName: Diagnose Linux disk usage
+    condition: and(succeeded(), eq(variables['Agent.OS'], 'Linux'))
+
   - pwsh: |
       Write-Host '=== Local disks (GiB) ==='
       Get-CimInstance Win32_LogicalDisk -Filter 'DriveType = 3' |
