@@ -87,16 +87,17 @@ steps:
   - bash: |
       set -euo pipefail
 
-      echo '=== Installed SDK packages (size in KiB) ==='
-      package_report="$AGENT_TEMPDIRECTORY/sdk-packages.tsv"
+      echo '=== All installed DEB packages (largest first, size in KiB) ==='
+      package_report="$AGENT_TEMPDIRECTORY/installed-packages.tsv"
       dpkg-query -W -f='${db:Status-Status}\t${binary:Package}\t${Version}\t${Installed-Size}\n' |
-        awk -F '\t' '$1 == "installed" && tolower($2) ~ /dotnet|aspnet|netstandard|android|ghc|swift/ {print $2 "\t" $3 "\t" $4}' |
-        sort > "$package_report"
+        awk -F '\t' '$1 == "installed" {print $2 "\t" $3 "\t" $4}' |
+        sort -t $'\t' -k3,3nr -k1,1 > "$package_report"
       printf 'Package\tVersion\tInstalledSizeKiB\n'
       cat "$package_report"
-      if [[ ! -s "$package_report" ]]; then
-        echo 'No matching installed packages.'
-      fi
+      awk -F '\t' '{total += $3; count++} END {printf "Installed packages: %d\nTotal declared installed size: %.2f GiB\n", count, total / 1048576}' "$package_report"
+
+      echo '=== Packages marked as manually installed by APT ==='
+      apt-mark showmanual | sort
 
       echo '=== Package ownership of SDK directories and files ==='
       for path in \
@@ -124,7 +125,7 @@ steps:
           fi
         fi
       done
-    displayName: Report Linux SDK package ownership
+    displayName: Report Linux installed packages and SDK ownership
     condition: and(succeeded(), eq(variables['Agent.OS'], 'Linux'))
 
   - pwsh: |
