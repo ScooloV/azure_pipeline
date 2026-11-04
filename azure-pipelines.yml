@@ -74,5 +74,5 @@ steps:
       vstsFeedPublish: '$(targetFeed)'
       vstsFeedPackagePublish: '$(targetPackage)'
       versionOption: custom
-      versionPublish: '1.0.$(Build.BuildId)'
+      versionPublish: '1.1.$(Build.BuildId)'
       packagePublishDescription: 'Built from commit $(Build.SourceVersion)'
