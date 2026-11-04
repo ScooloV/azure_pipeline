@@ -11,10 +11,6 @@ strategy:
       vmImage: ubuntu-24.04
     ubuntu_26_04:
       vmImage: ubuntu-26.04
-    windows_2022:
-      vmImage: windows-2022
-    windows_2025:
-      vmImage: windows-2025
 
 pool:
   vmImage: $(vmImage)
@@ -26,116 +22,35 @@ variables:
 steps:
   - checkout: none
 
-  - pwsh: |
-      Write-Host '=== Azure Pipelines ==='
-      Write-Host "Requested image: $env:REQUESTED_IMAGE"
-      Write-Host "Agent: $env:AGENT_NAME"
-      Write-Host "OS: $env:AGENT_OS"
-      Write-Host "Architecture: $env:AGENT_OSARCHITECTURE"
-      Write-Host "Image: $env:ImageOS ($env:ImageVersion)"
-      Write-Host "Workspace: $env:PIPELINE_WORKSPACE"
-      Write-Host "Temp directory: $env:AGENT_TEMPDIRECTORY"
-    displayName: Show image and agent details
-    env:
-      REQUESTED_IMAGE: $(vmImage)
-
   - bash: |
       set -euo pipefail
 
-      echo '=== All filesystems (GiB) ==='
-      df -BG -T
-      echo '=== Workspace and temp filesystems (GiB) ==='
-      df -BG -T "$PIPELINE_WORKSPACE" "$AGENT_TEMPDIRECTORY"
-    displayName: Show Linux disk space
-    condition: and(succeeded(), eq(variables['Agent.OS'], 'Linux'))
-
-  - bash: |
-      set -euo pipefail
-
-      echo '=== Largest directories on root filesystem (MiB, depth 2) ==='
-      # Stay on the root filesystem; keep stderr visible for scan errors.
-      sudo du -x -m --max-depth=2 / | sort -n | tail -n 80
-
-      echo '=== Installed tools and caches (MiB, depth 2) ==='
-      paths=()
-      for path in /usr/local /usr/share /opt /var/lib /var/cache /home; do
-        if [[ -d "$path" ]]; then
-          paths+=("$path")
-        fi
-      done
-      if [[ -n "${AGENT_TOOLSDIRECTORY:-}" && -d "$AGENT_TOOLSDIRECTORY" ]]; then
-        paths+=("$AGENT_TOOLSDIRECTORY")
-      fi
-      if (( ${#paths[@]} > 0 )); then
-        sudo du -x -m --max-depth=2 "${paths[@]}" | sort -n | tail -n 100
-      fi
-
-      echo '=== Docker disk usage ==='
-      if command -v docker >/dev/null 2>&1; then
-        if ! sudo docker system df -v; then
-          echo '##vso[task.logissue type=warning]Docker disk usage is unavailable.'
-        fi
-      else
-        echo 'Docker is not installed.'
-      fi
-
-      echo '=== Root filesystem usage (bytes) ==='
+      echo '=== Before SDK cleanup ==='
+      sync
       df -B1 -T /
-    displayName: Diagnose Linux disk usage
-    condition: and(succeeded(), eq(variables['Agent.OS'], 'Linux'))
+      before_bytes="$(df -B1 --output=avail / | awk 'NR == 2 {print $1}')"
 
-  - bash: |
-      set -euo pipefail
-
-      echo '=== All installed DEB packages (largest first, size in KiB) ==='
-      package_report="$AGENT_TEMPDIRECTORY/installed-packages.tsv"
-      dpkg-query -W -f='${db:Status-Status}\t${binary:Package}\t${Version}\t${Installed-Size}\n' |
-        awk -F '\t' '$1 == "installed" {print $2 "\t" $3 "\t" $4}' |
-        sort -t $'\t' -k3,3nr -k1,1 > "$package_report"
-      printf 'Package\tVersion\tInstalledSizeKiB\n'
-      cat "$package_report"
-      awk -F '\t' '{total += $3; count++} END {printf "Installed packages: %d\nTotal declared installed size: %.2f GiB\n", count, total / 1048576}' "$package_report"
-
-      echo '=== Packages marked as manually installed by APT ==='
-      apt-mark showmanual | sort
-
-      echo '=== Package ownership of SDK directories and files ==='
-      for path in \
-        /usr/share/dotnet \
-        /usr/share/dotnet/dotnet \
+      echo '=== Removing Android, .NET, Haskell and Swift ==='
+      SECONDS=0
+      sudo rm -rf -- \
         /usr/local/lib/android \
-        /usr/local/lib/android/cmdline-tools/latest/bin/sdkmanager \
+        /usr/share/dotnet \
         /usr/local/.ghcup \
-        /usr/local/.ghcup/bin/ghc \
-        /usr/share/swift \
-        /usr/share/swift/usr/bin/swift; do
-        printf '\n--- %s ---\n' "$path"
-        if [[ ! -e "$path" ]]; then
-          echo 'Path does not exist on this image.'
-          continue
-        fi
-        if ! dpkg-query -S "$path"; then
-          echo 'No package ownership record for this path.'
-        fi
-        resolved="$(readlink -f -- "$path")"
-        if [[ "$resolved" != "$path" ]]; then
-          printf 'Resolved path: %s\n' "$resolved"
-          if ! dpkg-query -S "$resolved"; then
-            echo 'No package ownership record for the resolved path.'
-          fi
-        fi
-      done
-    displayName: Report Linux installed packages and SDK ownership
-    condition: and(succeeded(), eq(variables['Agent.OS'], 'Linux'))
+        /usr/share/swift
+      removal_seconds=$SECONDS
+      sync
+      total_seconds=$SECONDS
 
-  - pwsh: |
-      Write-Host '=== Local disks (GiB) ==='
-      Get-CimInstance Win32_LogicalDisk -Filter 'DriveType = 3' |
-        Sort-Object DeviceID |
-        Select-Object DeviceID, VolumeName, FileSystem,
-          @{Name='SizeGiB'; Expression={[math]::Round($_.Size / 1GB, 2)}},
-          @{Name='UsedGiB'; Expression={[math]::Round(($_.Size - $_.FreeSpace) / 1GB, 2)}},
-          @{Name='FreeGiB'; Expression={[math]::Round($_.FreeSpace / 1GB, 2)}} |
-        Format-Table -AutoSize
-    displayName: Show Windows disk space
-    condition: and(succeeded(), eq(variables['Agent.OS'], 'Windows_NT'))
+      echo '=== After SDK cleanup ==='
+      after_bytes="$(df -B1 --output=avail / | awk 'NR == 2 {print $1}')"
+      df -B1 -T /
+      awk -v before="$before_bytes" -v after="$after_bytes" \
+        -v removal="$removal_seconds" -v total="$total_seconds" \
+        'BEGIN {
+          printf "Free before: %.2f GiB (%s bytes)\n", before / 1073741824, before
+          printf "Free after: %.2f GiB (%s bytes)\n", after / 1073741824, after
+          printf "Space reclaimed: %.2f GiB (%.0f bytes)\n", (after - before) / 1073741824, after - before
+          printf "Deletion time: %d seconds\n", removal
+          printf "Deletion and sync time: %d seconds\n", total
+        }'
+    displayName: Remove unused Linux SDKs and measure savings
