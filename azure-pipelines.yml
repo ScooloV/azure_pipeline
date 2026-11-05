@@ -5,7 +5,7 @@ pool:
   vmImage: ubuntu-latest
 
 variables:
-  downstreamPipelineId: '123' # ID Pipeline B
+  downstreamPipelineId: '227' # ID Pipeline B
 
 steps:
   - checkout: self
