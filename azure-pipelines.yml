@@ -1,58 +1,79 @@
-trigger:
-  branches:
-    include:
-      - main
 
-strategy:
-  matrix:
-    ubuntu_22_04:
-      vmImage: ubuntu-22.04
-    ubuntu_24_04:
-      vmImage: ubuntu-24.04
-    ubuntu_26_04:
-      vmImage: ubuntu-26.04
+trigger: none
+pr: none
 
 pool:
-  vmImage: $(vmImage)
+  vmImage: ubuntu-latest
 
 variables:
-  LANG: C.UTF-8
-  LC_ALL: C.UTF-8
+  downstreamPipelineId: '123' # Заменить на ID Pipeline B
 
 steps:
-  - checkout: none
+  - checkout: self
 
   - bash: |
       set -euo pipefail
 
-      for path in \
-        /usr/local/lib/android \
-        /usr/share/dotnet \
-        /usr/local/.ghcup \
-        /usr/share/swift; do
-        printf '\n=== Cleanup: %s ===\n' "$path"
-        if [[ ! -e "$path" && ! -L "$path" ]]; then
-          echo 'Directory is absent; skipping.'
-          continue
-        fi
+      echo "Current Build ID: $BUILD_ID"
+      echo "Current Build Number: $BUILD_NUMBER"
+      echo "Current Branch: $SOURCE_BRANCH"
 
-        sync
-        before_bytes="$(df -B1 --output=avail / | awk 'NR == 2 {print $1}')"
-        started="$(date +%s.%N)"
-        sudo rm -rf -- "$path"
-        deleted="$(date +%s.%N)"
-        sync
-        finished="$(date +%s.%N)"
-        after_bytes="$(df -B1 --output=avail / | awk 'NR == 2 {print $1}')"
+      # Prepare JSON payload
+      jq -n \
+        --arg buildId "$BUILD_ID" \
+        --arg buildNumber "$BUILD_NUMBER" \
+        --arg branch "$SOURCE_BRANCH" \
+        '{
+          templateParameters: {
+            sourceBuildId: $buildId,
+            sourceBuildNumber: $buildNumber,
+            sourceBranch: $branch,
 
-        awk -v before="$before_bytes" -v after="$after_bytes" \
-          -v started="$started" -v deleted="$deleted" -v finished="$finished" \
-          'BEGIN {
-            printf "Free before: %.3f GiB (%s bytes)\n", before / 1073741824, before
-            printf "Free after: %.3f GiB (%s bytes)\n", after / 1073741824, after
-            printf "Space reclaimed: %.3f GiB (%.0f bytes)\n", (after - before) / 1073741824, after - before
-            printf "Deletion time: %.3f seconds\n", deleted - started
-            printf "Deletion and sync time: %.3f seconds\n", finished - started
-          }'
-      done
-    displayName: Remove Linux SDKs with individual time and space measurements
+            customMessage: "Hello from Pipeline A!",
+            releaseTag: "v1.2.3-rc1",
+
+            testConfig: {
+              environment: "staging",
+              suite: "regression",
+              retryCount: 2,
+              notifyTeam: true,
+              browsers: [
+                "chromium",
+                "firefox"
+              ],
+              metadata: {
+                owner: "QA Team",
+                ticket: "QA-1042",
+                priority: "high"
+              }
+            }
+          }
+        }' > payload.json
+
+      echo "Payload:"
+      jq . payload.json
+
+      echo "Triggering Pipeline B..."
+
+      curl --fail-with-body --silent --show-error \
+        -X POST \
+        -H "Authorization: Bearer $SYSTEM_ACCESSTOKEN" \
+        -H "Content-Type: application/json" \
+        --data @payload.json \
+        --output response.json \
+        "${COLLECTION_URI}${PROJECT_ID}/_apis/pipelines/${PIPELINE_ID}/runs?api-version=7.1"
+
+      echo "Pipeline B queued successfully:"
+      jq '{id, name, state}' response.json
+
+    displayName: Trigger Pipeline B
+
+    env:
+      SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+      COLLECTION_URI: $(System.TeamFoundationCollectionUri)
+      PROJECT_ID: $(System.TeamProjectId)
+      PIPELINE_ID: $(downstreamPipelineId)
+
+      BUILD_ID: $(Build.BuildId)
+      BUILD_NUMBER: $(Build.BuildNumber)
+      SOURCE_BRANCH: $(Build.SourceBranch)
