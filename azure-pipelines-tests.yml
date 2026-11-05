@@ -1,4 +1,3 @@
-
 trigger: none
 pr: none
 
@@ -23,15 +22,9 @@ parameters:
     type: string
     default: 'none'
 
-  - name: testConfig
-    type: object
-    default:
-      environment: local
-      suite: smoke
-      retryCount: 0
-      notifyTeam: false
-      browsers: []
-      metadata: {}
+  - name: testConfigJson
+    type: string
+    default: '{}'
 
 pool:
   vmImage: ubuntu-latest
@@ -40,14 +33,11 @@ jobs:
   - job: TestJob
     displayName: Print received parameters
 
-    timeoutInMinutes: 60
-
     steps:
       - checkout: self
 
       - bash: |
           bash scripts/run-tests.sh
-
         displayName: Print all parameters
 
         env:
@@ -56,4 +46,4 @@ jobs:
           SOURCE_BRANCH: ${{ parameters.sourceBranch }}
           CUSTOM_MESSAGE: ${{ parameters.customMessage }}
           RELEASE_TAG: ${{ parameters.releaseTag }}
-          TEST_CONFIG_JSON: ${{ convertToJson(parameters.testConfig) }}
+          TEST_CONFIG_JSON: ${{ parameters.testConfigJson }}
